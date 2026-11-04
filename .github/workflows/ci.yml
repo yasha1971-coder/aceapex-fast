@@ -74,3 +74,33 @@ jobs:
           gcc -std=c99 -O2 -c axfast.c -o axfast.o
           g++ -std=c++17 -O2 -I. -Iext/aceapex/src tests/check.cpp axfast.o ext/aceapex/src/aceapex_api.cpp ext/aceapex/src/lit_fse.cpp -o check -lzstd -lpthread
           ./check $(for f in $INPUTS; do echo in/$f; done)
+  python:
+    name: Python binding (pytest, bytes == C)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: |
+          python -m pip install -q pytest ./python
+          cd /tmp && python -m pytest -q "$GITHUB_WORKSPACE/python/tests"
+  wheels:
+    name: wheels (${{ matrix.os }}), built and tested, not published
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-24.04, ubuntu-24.04-arm, macos-14, macos-13]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pypa/cibuildwheel@v2.21.3
+        with:
+          package-dir: python
+        env:
+          CIBW_BUILD: "cp310-* cp312-*"
+          CIBW_SKIP: "*-musllinux_* *-win*"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheels-${{ matrix.os }}
+          path: wheelhouse/*.whl
+          retention-days: 7

@@ -39,6 +39,22 @@ picked at load time on x86-64 Linux).
 CI runs the same gates on every push: C99 `-pedantic -Werror` with GCC and Clang, round trips, 32-bit, s390x under
 qemu, ASan + UBSan with 60 s of fuzzing, and byte-for-byte comparison with libaceapex 2.6.1.
 
+**Python.** `python/`: a CPython extension over the same two files, no runtime dependency
+(`pip install ./python`; CI builds wheels for manylinux x86_64/aarch64 and macOS, not published).
+`compress(data, level=1)`, `decompress(data, verify=True)` (verify: XXH3 of the output against the header, so a damaged
+archive raises `AxfastError` instead of returning wrong bytes), `decompress_range(data, off, length)`. Archives are
+byte-identical to the C library (pytest, 9 inputs x 8 levels). Speed against C on the same core (median of 5,
+[results/fastlib-py-speed-2026-11-04.log](results/fastlib-py-speed-2026-11-04.log)):
+
+| MB/s | C | Python verify=False | Python verify=True |
+|---|---|---|---|
+| silesia.tar, 1 MiB block archives | 14 639 | 13 799 (-5.7 %) | 5 674 |
+| enwik8, 1 MiB block archives | 15 316 | 15 046 (-1.8 %) | 5 829 |
+| silesia.tar, whole file (new 212 MB output each call) | 2 244 (fresh buffer) / 11 362 (reused) | 2 260 | 1 875 |
+
+A whole-file decompress returns a new `bytes` object, so the kernel faults in fresh pages: C with a fresh buffer pays
+the same. The checksum (scalar XXH3) is the price of `verify=True`.
+
 **Limits.**
 
 - CPU encoder only, one thread per call (the calls are independent: compress blocks of a file on your own threads,
