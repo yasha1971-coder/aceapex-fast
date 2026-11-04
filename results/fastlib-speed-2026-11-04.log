@@ -1,0 +1,8 @@
+# ace-core AMD EPYC 4344P 8-Core Processor; gcc 11.4.0 -O3, no -march; core 2; silesia.tar
+round 1 load 0.42/0.46 | enc lib 1068.1 axfast 1026.6 (0.961 x) | dec lib 11374 axfast 11211 (0.986 x) | 130497693 B
+round 2 load 0.46/0.46 | enc lib 1064.4 axfast 1024.0 (0.962 x) | dec lib 11909 axfast 11723 (0.984 x) | 130497693 B
+# dropped (load after 0.51): enc lib 1072.0 axfast 1004.3 (0.937 x) | dec lib 11906 axfast 11724 (0.985 x) | 130497693 B
+round 3 load 0.18/0.25 | enc lib 1070.8 axfast 1019.6 (0.952 x) | dec lib 11923 axfast 11746 (0.985 x) | 130497693 B
+round 4 load 0.25/0.31 | enc lib 1069.0 axfast 1035.1 (0.968 x) | dec lib 11946 axfast 11723 (0.981 x) | 130497693 B
+round 5 load 0.31/0.31 | enc lib 1111.7 axfast 1030.1 (0.927 x) | dec lib 11513 axfast 11367 (0.987 x) | 130497693 B
+DONE

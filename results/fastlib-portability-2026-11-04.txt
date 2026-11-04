@@ -1,0 +1,11 @@
+# fastlib step 1 gates 2 and 4 (ace-core 2026-11-04); rt.c: levels 1..8, archive bytes compared with x86
+e0: x86 ok 8/8, s390x (zig 0.14.1 cc -target s390x-linux-musl, qemu-s390x-static) ok 8/8 bytes ==x86, gcc -m32 bytes ==x86
+e1: x86 ok 8/8, s390x (zig 0.14.1 cc -target s390x-linux-musl, qemu-s390x-static) ok 8/8 bytes ==x86, gcc -m32 bytes ==x86
+e100: x86 ok 8/8, s390x (zig 0.14.1 cc -target s390x-linux-musl, qemu-s390x-static) ok 8/8 bytes ==x86, gcc -m32 bytes ==x86
+silesia.64k: x86 ok 8/8, s390x (zig 0.14.1 cc -target s390x-linux-musl, qemu-s390x-static) ok 8/8 bytes ==x86, gcc -m32 bytes ==x86
+e1m5: x86 ok 8/8, s390x (zig 0.14.1 cc -target s390x-linux-musl, qemu-s390x-static) ok 8/8 bytes ==x86, gcc -m32 bytes ==x86
+erand: x86 ok 8/8, s390x (zig 0.14.1 cc -target s390x-linux-musl, qemu-s390x-static) ok 8/8 bytes ==x86, gcc -m32 bytes ==x86
+edna: x86 ok 8/8, s390x (zig 0.14.1 cc -target s390x-linux-musl, qemu-s390x-static) ok 8/8 bytes ==x86, gcc -m32 bytes ==x86
+zeros_fast_1500K: x86 ok 8/8, s390x (zig 0.14.1 cc -target s390x-linux-musl, qemu-s390x-static) ok 8/8 bytes ==x86, gcc -m32 bytes ==x86
+ASan+UBSan (gcc 11.4 -O1 -fsanitize=address,undefined): rt ok 80/80 on 10 inputs, reports 0
+fuzz negative control (99999-byte buffer passed as 100000): ASan heap-buffer-overflow reported, rc 1

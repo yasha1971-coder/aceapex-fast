@@ -1,0 +1,76 @@
+name: CI
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+env:
+  INPUTS: empty one small text dna zeros rand period mixed
+jobs:
+  build:
+    name: build + round trip (${{ matrix.cc }})
+    runs-on: ubuntu-24.04
+    strategy:
+      matrix:
+        cc: [gcc, clang]
+    steps:
+      - uses: actions/checkout@v4
+      - name: C99 pedantic, no warnings
+        run: ${{ matrix.cc }} -std=c99 -pedantic -Wall -Wextra -Werror -O2 -c axfast.c -o axfast.o
+      - name: round trip, levels 1-8
+        run: |
+          ${{ matrix.cc }} -std=c99 -O2 -Wall -Wextra -Werror -I. tests/gen.c -o gen && mkdir in && ./gen in
+          ${{ matrix.cc }} -std=c99 -O2 -Wall -Wextra -Werror -I. tests/rt.c axfast.c -o rt
+          for f in $INPUTS; do echo "== $f"; ./rt in/$f; done
+  m32:
+    name: 32-bit x86 (same bytes as 64-bit)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update -q && sudo apt-get install -y -q gcc-multilib
+      - run: |
+          gcc -std=c99 -O2 -I. tests/gen.c -o gen && mkdir in && ./gen in
+          gcc -std=c99 -O2 -Wall -Wextra -Werror -I. tests/rt.c axfast.c -o rt64
+          gcc -m32 -std=c99 -O2 -Wall -Wextra -Werror -I. tests/rt.c axfast.c -o rt32
+          for f in $INPUTS; do ./rt64 in/$f > a.txt; ./rt32 in/$f > b.txt; diff a.txt b.txt && echo "$f: 32-bit bytes == 64-bit"; done
+  s390x:
+    name: big-endian s390x under qemu (same bytes as x86)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update -q && sudo apt-get install -y -q gcc-s390x-linux-gnu qemu-user-static
+      - run: |
+          gcc -std=c99 -O2 -I. tests/gen.c -o gen && mkdir in && ./gen in
+          gcc -std=c99 -O2 -Wall -Wextra -Werror -I. tests/rt.c axfast.c -o rt_x86
+          s390x-linux-gnu-gcc -static -std=c99 -O2 -Wall -Wextra -Werror -I. tests/rt.c axfast.c -o rt_s390x
+          for f in $INPUTS; do ./rt_x86 in/$f > a.txt; qemu-s390x-static ./rt_s390x in/$f > b.txt; diff a.txt b.txt && echo "$f: s390x round trip ok, bytes == x86"; done
+  sanitize:
+    name: ASan + UBSan round trips, fuzz 60 s, negative control
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - run: |
+          SAN="-O1 -g -fsanitize=address,undefined -fno-sanitize-recover=undefined"
+          gcc -std=c99 -O2 -I. tests/gen.c -o gen && mkdir in && ./gen in
+          gcc -std=c99 $SAN -Wall -Wextra -Werror -I. tests/rt.c axfast.c -o rt
+          gcc -std=c99 $SAN -Wall -Wextra -Werror -I. tests/fuzz.c axfast.c -o fuzz
+          for f in $INPUTS; do ./rt in/$f; done
+          ./fuzz 60
+          if ./fuzz control > control.txt 2>&1; then cat control.txt; echo "negative control NOT caught"; exit 1; fi
+          grep -q 'ERROR: AddressSanitizer' control.txt && echo "negative control caught"
+  bytes:
+    name: byte for byte with libaceapex 2.6.1 (levels 11-18)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: yasha1971-coder/aceapex
+          ref: v2.6.1
+          path: ext/aceapex
+      - run: sudo apt-get update -q && sudo apt-get install -y -q libzstd-dev
+      - run: |
+          gcc -std=c99 -O2 -I. tests/gen.c -o gen && mkdir in && ./gen in
+          gcc -std=c99 -O2 -c axfast.c -o axfast.o
+          g++ -std=c++17 -O2 -I. -Iext/aceapex/src tests/check.cpp axfast.o ext/aceapex/src/aceapex_api.cpp ext/aceapex/src/lit_fse.cpp -o check -lzstd -lpthread
+          ./check $(for f in $INPUTS; do echo in/$f; done)

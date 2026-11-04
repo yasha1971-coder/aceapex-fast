@@ -1,0 +1,1 @@
+fuzz: 10500 mutants in 180 s: 3904 decoded to the declared size, 6596 rejected, 0 wrong return values
