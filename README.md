@@ -58,4 +58,4 @@ qemu, ASan + UBSan with 60 s of fuzzing, and byte-for-byte comparison with libac
 - lzbench: `aceapex_fast` is in [inikep/lzbench](https://github.com/inikep/lzbench) since #355, 2.6.1 since
   [#357](https://github.com/inikep/lzbench/pull/357).
 
-License: MIT (as ACEAPEX). XXH3's default secret is the reference implementation's (xxHash, BSD 2-Clause).
+License: MIT; XXH3 secret from xxHash, BSD 2-Clause, see [THIRD_PARTY_LICENSES](THIRD_PARTY_LICENSES).

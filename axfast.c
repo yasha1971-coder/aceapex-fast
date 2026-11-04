@@ -251,8 +251,10 @@ AXF_INLINE uint32_t axf_dec_block_of(const axf_arc_t* a, uint32_t b, uint8_t* ds
     return axf_dec_block(a->data + o, (size_t)(e - o), dst, axf_block_len(a, b), a->mm);
 }
 
-/* ---- XXH3-64, seed 0, default secret (the header checksum). Scalar, written from the XXH3 specification; the secret is
- * the reference implementation's (xxHash, BSD 2-Clause, Yann Collet). Same values as XXH3_64bits on every host. ---- */
+/* ---- XXH3-64, seed 0, default secret (the header checksum). Scalar, written from the XXH3 specification; the same values
+ * as XXH3_64bits on every host. ---- */
+/* The XXH3 default secret below is from xxHash: Copyright (C) 2012-2023 Yann Collet, BSD 2-Clause License;
+ * full text in THIRD_PARTY_LICENSES. */
 static const uint8_t axh_secret[192] = {
     0xb8, 0xfe, 0x6c, 0x39, 0x23, 0xa4, 0x4b, 0xbe, 0x7c, 0x01, 0x81, 0x2c, 0xf7, 0x21, 0xad, 0x1c,
     0xde, 0xd4, 0x6d, 0xe9, 0x83, 0x90, 0x97, 0xdb, 0x72, 0x40, 0xa4, 0xa4, 0xb7, 0xb3, 0x67, 0x1f,
