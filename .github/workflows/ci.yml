@@ -72,11 +72,18 @@ jobs:
           SAN="-O1 -g -fsanitize=address,undefined -fno-sanitize-recover=undefined"
           gcc -std=c99 -O2 -I. tests/gen.c -o gen && mkdir in && ./gen in
           gcc -std=c99 $SAN -Wall -Wextra -Werror -I. tests/rt.c axfast.c -o rt
-          gcc -std=c99 $SAN -Wall -Wextra -Werror -I. tests/fuzz.c axfast.c -o fuzz
+          gcc -std=c99 $SAN -Wall -Wextra -Werror -I. tests/fuzz.c axfast.c -o fuzz_mut
           for f in $INPUTS; do ./rt in/$f; done
-          ./fuzz 60
-          if ./fuzz control > control.txt 2>&1; then cat control.txt; echo "negative control NOT caught"; exit 1; fi
+          ./fuzz_mut 60
+          if ./fuzz_mut control > control.txt 2>&1; then cat control.txt; echo "negative control NOT caught"; exit 1; fi
           grep -q 'ERROR: AddressSanitizer' control.txt && echo "negative control caught"
+      - name: ClusterFuzzLite harness fuzz/fuzz_axfast.c with gcc (seeds + 60 s mutations) + VERIFY-assert negative control
+        run: |
+          SAN="-O1 -g -std=c99 -Wall -Wextra -Werror -fsanitize=address,undefined -fno-sanitize-recover=all"
+          mkdir seeds && gcc $SAN -I. fuzz/make_seeds.c axfast.c -o make_seeds && ./make_seeds seeds
+          gcc $SAN -I. fuzz/fuzz_axfast.c fuzz/standalone.c axfast.c -o fz && ./fz 60 seeds/*
+          gcc $SAN -DFUZZ_AXFAST_CONTROL -I. fuzz/fuzz_axfast.c fuzz/standalone.c axfast.c -o fzc
+          if ./fzc 60 seeds/verify*; then echo "VERIFY-assert negative control NOT caught"; exit 1; fi; echo "VERIFY-assert negative control caught"
   bytes:
     name: byte for byte with libaceapex 2.6.1 (levels 11-18)
     runs-on: ubuntu-24.04
