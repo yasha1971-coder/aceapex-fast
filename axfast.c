@@ -309,6 +309,81 @@ static void axh_scramble(uint64_t* acc, const uint8_t* s) {
     int i;
     for (i = 0; i < 8; i++) { uint64_t a = acc[i]; a ^= a >> 47; a ^= axf_rd64(s + 8 * i); a *= AXH_P32_1; acc[i] = a; }
 }
+/* the long-input loop (len > 240): every 1024-byte block (16 stripes) then a scramble, the partial last block, the last
+ * stripe. Scalar here; AVX2 (x86-64, picked at run time) and NEON (little-endian AArch64) below give the same lanes. */
+static void axh_long_scalar(uint64_t* acc, const uint8_t* p, size_t len) {
+    const uint8_t* s = axh_secret; const size_t block = 64 * 16, nb = (len - 1) / block; size_t b, k, ns;
+    for (b = 0; b < nb; b++) { for (k = 0; k < 16; k++) axh_round(acc, p + b * block + 64 * k, s + 8 * k); axh_scramble(acc, s + 192 - 64); }
+    ns = ((len - 1) - block * nb) / 64;
+    for (k = 0; k < ns; k++) axh_round(acc, p + nb * block + 64 * k, s + 8 * k);
+    axh_round(acc, p + len - 64, s + 192 - 64 - 7);
+}
+#if (defined(__x86_64__) || defined(_M_X64)) && (defined(__GNUC__) || defined(__clang__)) && !defined(AXFAST_NO_SIMD)
+#define AXH_AVX2 1
+#include <immintrin.h>
+/* one stripe: acc[i ^ 1] += data[i]; acc[i] += lo32(data[i] ^ key[i]) * hi32(data[i] ^ key[i]), four lanes per vector */
+#define AXH_AVX2_ROUND(a0, a1, p, s) do { \
+        const __m256i d0 = _mm256_loadu_si256((const __m256i*)(const void*)(p)), d1 = _mm256_loadu_si256((const __m256i*)(const void*)((p) + 32)); \
+        const __m256i k0 = _mm256_xor_si256(d0, _mm256_loadu_si256((const __m256i*)(const void*)(s))); \
+        const __m256i k1 = _mm256_xor_si256(d1, _mm256_loadu_si256((const __m256i*)(const void*)((s) + 32))); \
+        a0 = _mm256_add_epi64(_mm256_add_epi64(a0, _mm256_shuffle_epi32(d0, _MM_SHUFFLE(1, 0, 3, 2))), _mm256_mul_epu32(k0, _mm256_srli_epi64(k0, 32))); \
+        a1 = _mm256_add_epi64(_mm256_add_epi64(a1, _mm256_shuffle_epi32(d1, _MM_SHUFFLE(1, 0, 3, 2))), _mm256_mul_epu32(k1, _mm256_srli_epi64(k1, 32))); \
+    } while (0)
+__attribute__((target("avx2"))) static __m256i axh_avx2_scr(__m256i a, const uint8_t* s) {
+    const __m256i p32 = _mm256_set1_epi32((int)AXH_P32_1);
+    const __m256i k = _mm256_xor_si256(_mm256_xor_si256(a, _mm256_srli_epi64(a, 47)), _mm256_loadu_si256((const __m256i*)(const void*)s));
+    const __m256i lo = _mm256_mul_epu32(k, p32), hi = _mm256_mul_epu32(_mm256_shuffle_epi32(k, _MM_SHUFFLE(0, 3, 0, 1)), p32);
+    return _mm256_add_epi64(lo, _mm256_slli_epi64(hi, 32));
+}
+__attribute__((target("avx2"))) static void axh_long_avx2(uint64_t* acc, const uint8_t* p, size_t len) {
+    const uint8_t* s = axh_secret; const size_t block = 64 * 16, nb = (len - 1) / block; size_t b, k, ns;
+    __m256i a0 = _mm256_loadu_si256((const __m256i*)(const void*)acc), a1 = _mm256_loadu_si256((const __m256i*)(const void*)(acc + 4));
+    for (b = 0; b < nb; b++) {
+        for (k = 0; k < 16; k++) AXH_AVX2_ROUND(a0, a1, p + b * block + 64 * k, s + 8 * k);
+        a0 = axh_avx2_scr(a0, s + 192 - 64); a1 = axh_avx2_scr(a1, s + 192 - 32);
+    }
+    ns = ((len - 1) - block * nb) / 64;
+    for (k = 0; k < ns; k++) AXH_AVX2_ROUND(a0, a1, p + nb * block + 64 * k, s + 8 * k);
+    AXH_AVX2_ROUND(a0, a1, p + len - 64, s + 192 - 64 - 7);
+    _mm256_storeu_si256((__m256i*)(void*)acc, a0); _mm256_storeu_si256((__m256i*)(void*)(acc + 4), a1);
+}
+#endif
+#if defined(__aarch64__) && defined(__ARM_NEON) && !defined(AXF_BIG_ENDIAN) && !defined(AXFAST_NO_SIMD)
+#define AXH_NEON 1
+#include <arm_neon.h>
+static uint64x2_t axh_neon_rnd(uint64x2_t a, const uint8_t* p, const uint8_t* s) {
+    const uint64x2_t d = vreinterpretq_u64_u8(vld1q_u8(p)), k = veorq_u64(d, vreinterpretq_u64_u8(vld1q_u8(s)));
+    return vmlal_u32(vaddq_u64(a, vextq_u64(d, d, 1)), vmovn_u64(k), vshrn_n_u64(k, 32));
+}
+static uint64x2_t axh_neon_scr(uint64x2_t a, const uint8_t* s) {
+    const uint64x2_t k = veorq_u64(veorq_u64(a, vshrq_n_u64(a, 47)), vreinterpretq_u64_u8(vld1q_u8(s)));
+    const uint32x2_t p32 = vdup_n_u32(AXH_P32_1);
+    return vmlal_u32(vshlq_n_u64(vmull_u32(vshrn_n_u64(k, 32), p32), 32), vmovn_u64(k), p32);
+}
+static void axh_long_neon(uint64_t* acc, const uint8_t* p, size_t len) {
+    const uint8_t* s = axh_secret; const size_t block = 64 * 16, nb = (len - 1) / block; size_t b, k, ns; int j;
+    uint64x2_t a[4];
+    for (j = 0; j < 4; j++) a[j] = vld1q_u64(acc + 2 * j);
+    for (b = 0; b < nb; b++) {
+        for (k = 0; k < 16; k++) for (j = 0; j < 4; j++) a[j] = axh_neon_rnd(a[j], p + b * block + 64 * k + 16 * j, s + 8 * k + 16 * j);
+        for (j = 0; j < 4; j++) a[j] = axh_neon_scr(a[j], s + 192 - 64 + 16 * j);
+    }
+    ns = ((len - 1) - block * nb) / 64;
+    for (k = 0; k < ns; k++) for (j = 0; j < 4; j++) a[j] = axh_neon_rnd(a[j], p + nb * block + 64 * k + 16 * j, s + 8 * k + 16 * j);
+    for (j = 0; j < 4; j++) a[j] = axh_neon_rnd(a[j], p + len - 64 + 16 * j, s + 192 - 64 - 7 + 16 * j);
+    for (j = 0; j < 4; j++) vst1q_u64(acc + 2 * j, a[j]);
+}
+#endif
+typedef void (*axh_long_fn)(uint64_t*, const uint8_t*, size_t);
+static axh_long_fn axh_pick(void) {
+#ifdef AXH_AVX2
+    if (__builtin_cpu_supports("avx2")) return axh_long_avx2;
+#endif
+#ifdef AXH_NEON
+    return axh_long_neon;
+#endif
+    return axh_long_scalar;
+}
 uint64_t axfast_xxh3(const void* in, size_t len) {
     const uint8_t* p = (const uint8_t*)in; const uint8_t* s = axh_secret;
     if (len <= 16) {
@@ -348,10 +423,10 @@ uint64_t axfast_xxh3(const void* in, size_t len) {
     }
     {   /* long input: blocks of 16 stripes of 64 bytes, a scramble after each block */
         uint64_t acc[8] = { AXH_P32_3, AXH_P64_1, AXH_P64_2, AXH_P64_3, AXH_P64_4, AXH_P32_2, AXH_P64_5, AXH_P32_1 };
-        const size_t block = 64 * 16, nb = (len - 1) / block; size_t b, k, i; uint64_t r;
-        for (b = 0; b < nb; b++) { for (k = 0; k < 16; k++) axh_round(acc, p + b * block + 64 * k, s + 8 * k); axh_scramble(acc, s + 192 - 64); }
-        { const size_t ns = ((len - 1) - block * nb) / 64; for (k = 0; k < ns; k++) axh_round(acc, p + nb * block + 64 * k, s + 8 * k); }
-        axh_round(acc, p + len - 64, s + 192 - 64 - 7);
+        /* picked once; concurrent first calls store the same pointer */
+        static axh_long_fn volatile fn = 0; axh_long_fn f = fn; size_t i; uint64_t r;
+        if (!f) { f = axh_pick(); fn = f; }
+        f(acc, p, len);
         r = (uint64_t)len * AXH_P64_1;
         for (i = 0; i < 4; i++) r += axh_fold(acc[2 * i] ^ axf_rd64(s + 11 + 16 * i), acc[2 * i + 1] ^ axf_rd64(s + 11 + 16 * i + 8));
         return axh_aval(r);

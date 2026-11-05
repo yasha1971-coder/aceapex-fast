@@ -13,8 +13,9 @@ def tools(tmp_path_factory):
     cc = os.environ.get("CC") or shutil.which("cc") or shutil.which("gcc") or shutil.which("clang")
     if not cc:
         pytest.skip("no C compiler for the reference helpers")
-    for name, srcs in (("gen", ["tests/gen.c"]), ("axc", ["tests/axc.c", "axfast.c"])):
-        subprocess.run([cc, "-std=c99", "-O2", "-I", str(ROOT), *[str(ROOT / s) for s in srcs], "-o", str(d / name)], check=True)
+    for name, srcs, flags in (("gen", ["tests/gen.c"], []), ("axc", ["tests/axc.c", "axfast.c"], []),
+                              ("xxh3_scalar", ["tests/xxh3_dump.c", "axfast.c"], ["-DAXFAST_NO_SIMD"])):
+        subprocess.run([cc, "-std=c99", "-O2", *flags, "-I", str(ROOT), *[str(ROOT / s) for s in srcs], "-o", str(d / name)], check=True)
     (d / "in").mkdir()
     subprocess.run([str(d / "gen"), str(d / "in")], check=True)
     return d

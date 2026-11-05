@@ -13,7 +13,10 @@ def run(key, fn):
 def each(verify):   # every result dropped before the next call (as free() in the C side)
     for b in blocks:
         af.decompress(b, verify=verify)
+out = bytearray(n)
 for _ in range(R):
+    run("whole_into_noverify", lambda: af.decompress_into(z, out, verify=False))
+    run("whole_into_verify", lambda: af.decompress_into(z, out, verify=True))
     run("block_noverify", lambda: each(False))
     run("block_verify", lambda: each(True))
     run("whole_noverify", lambda: af.decompress(z, verify=False))

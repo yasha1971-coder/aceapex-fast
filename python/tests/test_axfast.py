@@ -61,3 +61,39 @@ def test_errors_and_types(inputs):
     assert af.xxh3(b"") == 0x2D06800538D394C2
     with pytest.raises(TypeError):
         af.compress("text")
+
+
+@pytest.mark.parametrize("name", ["text", "mixed", "empty", "one"])
+def test_decompress_into(inputs, name):
+    data = inputs[name]
+    for level in (1, 5):
+        z = af.compress(data, level)
+        out = bytearray(len(data) + 7)
+        assert af.decompress_into(z, out) == len(data) and bytes(out[:len(data)]) == data
+        mv = memoryview(bytearray(len(data)))
+        assert af.decompress_into(z, mv, verify=False) == len(data) and mv.tobytes() == data
+        if data:
+            with pytest.raises(af.AxfastError):
+                af.decompress_into(z, bytearray(len(data) - 1))
+            b = bytearray(z); b[len(b) // 2] ^= 0x10
+            try:
+                af.decompress_into(bytes(b), out)
+            except af.AxfastError:
+                pass
+            else:
+                assert bytes(out[:len(data)]) == data
+        with pytest.raises(TypeError):
+            af.decompress_into(z, bytes(len(data)))     # not writable
+
+
+def test_xxh3_simd_equals_scalar(tools, inputs):
+    """af.xxh3 (AVX2 / NEON / scalar, whatever this host picks) == the C scalar build on every CI input and on slices"""
+    import subprocess
+    names = list(inputs)
+    want = subprocess.run([str(tools / "xxh3_scalar"), *[str(tools / "in" / n) for n in names]], check=True, capture_output=True, text=True).stdout.split()
+    assert [f"{af.xxh3(inputs[n]):016x}" for n in names] == want
+    data = inputs["mixed"]
+    for n in list(range(0, 2000, 7)) + [65536, 65537, 1048575, len(data)]:
+        sl = tools / "slice"; sl.write_bytes(data[:n])
+        got = subprocess.run([str(tools / "xxh3_scalar"), str(sl)], check=True, capture_output=True, text=True).stdout.strip()
+        assert f"{af.xxh3(data[:n]):016x}" == got

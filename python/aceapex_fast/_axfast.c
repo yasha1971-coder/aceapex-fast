@@ -1,6 +1,6 @@
 /* _axfast.c - CPython extension over axfast.c (the C99 library one directory up). No runtime dependency.
  * compress(data, level=1) -> bytes; decompress(data, verify=True) -> bytes (verify: XXH3 of the output == header); decompress_range(data, off, length) -> bytes;
- * xxh3(data) -> int. Any bytes-like input (buffer protocol). The GIL is released while axfast works.
+ * decompress_into(data, out, verify=True) -> int (no new object); xxh3(data) -> int. Any bytes-like input (buffer protocol). The GIL is released while axfast works.
  * Errors: AxfastError (a ValueError) for a corrupt archive, a bad level or a range outside the original; MemoryError. */
 #define PY_SSIZE_T_CLEAN
 #include <Python.h>
@@ -56,6 +56,27 @@ static PyObject* py_decompress(PyObject* self, PyObject* args, PyObject* kw) {
     return out;
 }
 
+static PyObject* py_decompress_into(PyObject* self, PyObject* args, PyObject* kw) {
+    static char* kwl[] = {"data", "out", "verify", NULL};
+    Py_buffer in, out; int64_t n, rc; int verify = 1, ok = 1;
+    (void)self;
+    if (!PyArg_ParseTupleAndKeywords(args, kw, "y*w*|p:decompress_into", kwl, &in, &out, &verify)) return NULL;
+    n = axfast_original_size(in.buf, (size_t)in.len);
+    if (n < 0) { PyBuffer_Release(&in); PyBuffer_Release(&out); return raise_rc(n, "decompress_into"); }
+    if ((uint64_t)n > (uint64_t)out.len) {
+        PyBuffer_Release(&in); PyBuffer_Release(&out);
+        PyErr_Format(AxfastError, "decompress_into: out holds %zd bytes, the original is %lld", out.len, (long long)n); return NULL;
+    }
+    Py_BEGIN_ALLOW_THREADS
+    rc = axfast_decompress(in.buf, (size_t)in.len, out.buf, (size_t)n);
+    if (rc == n && verify) ok = axfast_xxh3(out.buf, (size_t)n) == axfast_stored_xxh3(in.buf, (size_t)in.len);
+    Py_END_ALLOW_THREADS
+    PyBuffer_Release(&in); PyBuffer_Release(&out);
+    if (rc != n) return raise_rc(rc < 0 ? rc : AXFAST_ERR_DATA, "decompress_into");
+    if (!ok) { PyErr_SetString(AxfastError, "decompress_into: XXH3 of the output differs from the archive header (corrupt archive)"); return NULL; }
+    return PyLong_FromLongLong((long long)n);
+}
+
 static PyObject* py_decompress_range(PyObject* self, PyObject* args) {
     Py_buffer in; unsigned long long off, len; int64_t rc; PyObject* out;
     (void)self;
@@ -88,6 +109,7 @@ static PyObject* py_xxh3(PyObject* self, PyObject* args) {
 static PyMethodDef methods[] = {
     {"compress", (PyCFunction)(void (*)(void))py_compress, METH_VARARGS | METH_KEYWORDS, "compress(data, level=1) -> bytes (level 1..8)"},
     {"decompress", (PyCFunction)(void (*)(void))py_decompress, METH_VARARGS | METH_KEYWORDS, "decompress(archive, verify=True) -> bytes; verify checks the header XXH3"},
+    {"decompress_into", (PyCFunction)(void (*)(void))py_decompress_into, METH_VARARGS | METH_KEYWORDS, "decompress_into(archive, out, verify=True) -> int: writes the original into the writable buffer out (len >= original), returns its size"},
     {"decompress_range", py_decompress_range, METH_VARARGS, "decompress_range(archive, off, length) -> bytes [off, off + length)"},
     {"xxh3", py_xxh3, METH_VARARGS, "xxh3(data) -> int: XXH3-64 (seed 0), the archive header's checksum"},
     {NULL, NULL, 0, NULL}

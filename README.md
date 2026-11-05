@@ -40,20 +40,24 @@ CI runs the same gates on every push: C99 `-pedantic -Werror` with GCC and Clang
 qemu, ASan + UBSan with 60 s of fuzzing, and byte-for-byte comparison with libaceapex 2.6.1.
 
 **Python.** `python/`: a CPython extension over the same two files, no runtime dependency
-(`pip install ./python`; CI builds wheels for manylinux x86_64/aarch64 and macOS, not published).
-`compress(data, level=1)`, `decompress(data, verify=True)` (verify: XXH3 of the output against the header, so a damaged
-archive raises `AxfastError` instead of returning wrong bytes), `decompress_range(data, off, length)`. Archives are
-byte-identical to the C library (pytest, 9 inputs x 8 levels). Speed against C on the same core (median of 5,
-[results/fastlib-py-speed-2026-11-04.log](results/fastlib-py-speed-2026-11-04.log)):
+(`pip install ./python`; CI builds wheels for manylinux x86_64/aarch64 and macOS arm64/x86_64, not published).
+`compress(data, level=1)`, `decompress(data, verify=True)`, `decompress_into(data, out, verify=True)` (into a writable
+buffer, no new object), `decompress_range(data, off, length)`, `xxh3(data)`. `verify` checks the XXH3-64 of the output
+against the header, so a damaged archive raises `AxfastError` instead of returning wrong bytes. Archives are
+byte-identical to the C library (pytest, 9 inputs x 8 levels). XXH3 uses AVX2 (x86-64, picked at run time) or NEON
+(AArch64), scalar otherwise; all three give the same hashes. Speed on one core, median of 5
+([results/fastlib-py-speed2-2026-11-05.log](results/fastlib-py-speed2-2026-11-05.log)):
 
 | MB/s | C | Python verify=False | Python verify=True |
 |---|---|---|---|
-| silesia.tar, 1 MiB block archives | 14 639 | 13 799 (-5.7 %) | 5 674 |
-| enwik8, 1 MiB block archives | 15 316 | 15 046 (-1.8 %) | 5 829 |
-| silesia.tar, whole file (new 212 MB output each call) | 2 244 (fresh buffer) / 11 362 (reused) | 2 260 | 1 875 |
+| silesia.tar, 1 MiB block archives (`decompress`) | 14 646 | 14 603 | 11 840 |
+| enwik8, 1 MiB block archives (`decompress`) | 15 439 | 15 112 | 12 057 |
+| silesia.tar, whole file (`decompress_into`, reused buffer) | 11 215 | 11 208 | 8 897 |
+| enwik8, whole file (`decompress_into`) | 12 666 | 12 673 | 10 089 |
+| silesia.tar, whole file (`decompress`: a new 212 MB `bytes` each call) | 2 244 (C, fresh buffer) | 2 200 | 2 191 |
 
-A whole-file decompress returns a new `bytes` object, so the kernel faults in fresh pages: C with a fresh buffer pays
-the same. The checksum (scalar XXH3) is the price of `verify=True`.
+A new `bytes` object of 212 MB costs the page faults of fresh memory (C with a fresh buffer pays the same);
+`decompress_into` avoids them.
 
 **Limits.**
 
