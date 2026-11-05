@@ -1,0 +1,25 @@
+# LVL18-2 2026-11-05 ace-core: tests/check.cpp, axfast.c with NICE=256 (optimal parse, levels 5-8)
+# levels 1-4 vs libaceapex v2.6.1 (gen inputs: dna empty mixed one period rand small text zeros )
+# 36 file-level lines, 0 failures
+# levels 5-8 vs libaceapex main f2b7e2936589bf55813eb710b38ea45830808f12 (same inputs)
+# 36 file-level lines, 0 failures
+# levels 5-8 vs v2.6.1 (expected to differ): 4 lines BYTES DIFF
+# enwik8 and period13_256k (seeded period-13 runs, sha256 eb7610b5bbbbdef8...) levels 1-8 vs main f2b7e29:
+enwik8 L1: libaceapex 83368659 B, axfast 83368659 B bytes==; axfast reads lib ok, lib reads axfast ok, ranges 64
+enwik8 L2: libaceapex 75527889 B, axfast 75527889 B bytes==; axfast reads lib ok, lib reads axfast ok, ranges 64
+enwik8 L3: libaceapex 51956468 B, axfast 51956468 B bytes==; axfast reads lib ok, lib reads axfast ok, ranges 64
+enwik8 L4: libaceapex 47909622 B, axfast 47909622 B bytes==; axfast reads lib ok, lib reads axfast ok, ranges 64
+enwik8 L5: libaceapex 78579436 B, axfast 78579436 B bytes==; axfast reads lib ok, lib reads axfast ok, ranges 64
+enwik8 L6: libaceapex 64764457 B, axfast 64764457 B bytes==; axfast reads lib ok, lib reads axfast ok, ranges 64
+enwik8 L7: libaceapex 49225289 B, axfast 49225289 B bytes==; axfast reads lib ok, lib reads axfast ok, ranges 64
+enwik8 L8: libaceapex 46211971 B, axfast 46211971 B bytes==; axfast reads lib ok, lib reads axfast ok, ranges 64
+period13_256k L1: libaceapex 7990 B, axfast 7990 B bytes==; axfast reads lib ok, lib reads axfast ok, ranges 64/64
+period13_256k L2: libaceapex 8090 B, axfast 8090 B bytes==; axfast reads lib ok, lib reads axfast ok, ranges 64/64
+period13_256k L3: libaceapex 8090 B, axfast 8090 B bytes==; axfast reads lib ok, lib reads axfast ok, ranges 64/64
+period13_256k L4: libaceapex 8090 B, axfast 8090 B bytes==; axfast reads lib ok, lib reads axfast ok, ranges 64/64
+period13_256k L5: libaceapex 7994 B, axfast 7994 B bytes==; axfast reads lib ok, lib reads axfast ok, ranges 64/64
+period13_256k L6: libaceapex 7994 B, axfast 7994 B bytes==; axfast reads lib ok, lib reads axfast ok, ranges 64/64
+period13_256k L7: libaceapex 7994 B, axfast 7994 B bytes==; axfast reads lib ok, lib reads axfast ok, ranges 64/64
+period13_256k L8: libaceapex 7994 B, axfast 7994 B bytes==; axfast reads lib ok, lib reads axfast ok, ranges 64/64
+# 16 file-level lines, 0 failures
+

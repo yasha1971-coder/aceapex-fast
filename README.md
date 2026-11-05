@@ -2,7 +2,7 @@
 
 **What.** The FAST profile of [ACEAPEX](https://github.com/yasha1971-coder/aceapex) as a C99 library in two files
 (`axfast.h`, `axfast.c`, ~700 lines, no dependency): an LZ77 codec with fixed 32-bit tokens and no entropy stage, built
-for decompression speed and random access to 1 MiB blocks. Archives are byte-identical to libaceapex at levels 11-18
+for decompression speed and random access to 1 MiB blocks. Archives == libaceapex at the pinned commit, levels 11-18
 (`aceapex_fast` 1-8 in lzbench), and each library reads the other's.
 
 **For whom.** Programs that want the fast decoder without the C++ library, zstd or threads: embedded and static builds,
@@ -37,7 +37,9 @@ picked at load time on x86-64 Linux).
 | corrupted archives (ASan + UBSan, 180 s) | 10 500 mutants: 3 904 decoded to the declared size, 6 596 rejected, 0 wrong results; negative control caught | [results/fastlib-fuzz-2026-11-04.log](results/fastlib-fuzz-2026-11-04.log) |
 
 CI runs the same gates on every push: C99 `-pedantic -Werror` with GCC and Clang, round trips, 32-bit, s390x under
-qemu, ASan + UBSan with 60 s of fuzzing, and byte-for-byte comparison with libaceapex 2.6.1.
+qemu, ASan + UBSan with 60 s of fuzzing, and byte-for-byte comparison with libaceapex at the pinned commit (levels 1-4:
+v2.6.1; levels 5-8: aceapex main f2b7e29, whose optimal parse stops the chain walk at a 256-byte match; the tag after
+2.6.2).
 
 **Python.** `python/`: a CPython extension over the same two files, no runtime dependency
 (`pip install ./python`; CI builds wheels for manylinux x86_64/aarch64 and macOS arm64/x86_64, not published).
