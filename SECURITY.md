@@ -7,6 +7,7 @@ Only `main`. There are no releases; fixes land on `main`.
 ## Reporting
 
 Use GitHub private vulnerability reporting only: the **Security** tab of this repository -> **Report a vulnerability**.
+Direct link: https://github.com/yasha1971-coder/aceapex-fast/security/advisories/new
 Do not open a public issue for a vulnerability.
 
 First reply within 7 days. No fix date is promised.
