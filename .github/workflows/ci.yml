@@ -72,10 +72,10 @@ jobs:
           SAN="-O1 -g -fsanitize=address,undefined -fno-sanitize-recover=undefined"
           gcc -std=c99 -O2 -I. tests/gen.c -o gen && mkdir in && ./gen in
           gcc -std=c99 $SAN -Wall -Wextra -Werror -I. tests/rt.c axfast.c -o rt
-          gcc -std=c99 $SAN -Wall -Wextra -Werror -I. tests/fuzz.c axfast.c -o fuzz
+          gcc -std=c99 $SAN -Wall -Wextra -Werror -I. tests/fuzz.c axfast.c -o fuzz_mut
           for f in $INPUTS; do ./rt in/$f; done
-          ./fuzz 60
-          if ./fuzz control > control.txt 2>&1; then cat control.txt; echo "negative control NOT caught"; exit 1; fi
+          ./fuzz_mut 60
+          if ./fuzz_mut control > control.txt 2>&1; then cat control.txt; echo "negative control NOT caught"; exit 1; fi
           grep -q 'ERROR: AddressSanitizer' control.txt && echo "negative control caught"
       - name: ClusterFuzzLite harness fuzz/fuzz_axfast.c with gcc (seeds + 60 s mutations) + VERIFY-assert negative control
         run: |
