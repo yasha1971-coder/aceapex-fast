@@ -3,7 +3,7 @@
 //   bytes  : axfast_compress(level) == aceapex_compress(level + 10, 1 thread) byte for byte, levels 1..8
 //   cross  : axfast_decompress reads libaceapex archives and aceapex_decompress_mt reads axfast archives (== input)
 //   range  : axfast_decompress_range on 64 seeded ranges == the input slice
-// Usage: check FILE... ; prints one line per file and level, a summary, exit 1 on any difference.
+// Usage: check [--levels=A-B] FILE... (default 1-8); prints one line per file and level, a summary, exit 1 on any difference.
 #include "aceapex.h"
 #include "axfast.h"
 #define XXH_INLINE_ALL
@@ -20,10 +20,12 @@ int main(int argc, char** argv) {
       for (size_t n = 0; n <= 5000; n++) xb += axfast_xxh3(b.data(), n) != XXH3_64bits(b.data(), n);
       for (size_t n : {65536ul, 65537ul, 1000003ul, (size_t)(1 << 20)}) xb += axfast_xxh3(b.data(), n) != XXH3_64bits(b.data(), n);
       printf("xxh3: %d differences on lengths 0..5000 + 4 long\n", xb); bad += xb; }
-    for (int fi = 1; fi < argc; fi++) {
+    int lo = 1, hi = 8, f0 = 1;
+    if (argc > 1 && sscanf(argv[1], "--levels=%d-%d", &lo, &hi) == 2) f0 = 2;
+    for (int fi = f0; fi < argc; fi++) {
         std::vector<uint8_t> in = slurp(argv[fi]); const size_t n = in.size();
         if (axfast_xxh3(in.data(), n) != XXH3_64bits(in.data(), n)) { printf("%s: xxh3 DIFF\n", argv[fi]); bad++; }
-        for (int lv = 1; lv <= 8; lv++) {
+        for (int lv = lo; lv <= hi; lv++) {
             std::vector<uint8_t> za(aceapex_compress_bound(n) + 4096), zb(axfast_bound(n)), o(n + 1);
             const int64_t sa = aceapex_compress(in.data(), n, za.data(), za.size(), lv + 10, 1);
             const int64_t sb = axfast_compress(in.data(), n, zb.data(), zb.size(), lv);

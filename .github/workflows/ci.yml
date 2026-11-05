@@ -85,7 +85,7 @@ jobs:
           gcc $SAN -DFUZZ_AXFAST_CONTROL -I. fuzz/fuzz_axfast.c fuzz/standalone.c axfast.c -o fzc
           if ./fzc 60 seeds/verify*; then echo "VERIFY-assert negative control NOT caught"; exit 1; fi; echo "VERIFY-assert negative control caught"
   bytes:
-    name: byte for byte with libaceapex 2.6.1 (levels 11-18)
+    name: byte for byte with libaceapex (levels 1-4 == v2.6.1 11-14; levels 5-8 == pinned main f2b7e29 15-18)
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -94,12 +94,19 @@ jobs:
           repository: yasha1971-coder/aceapex
           ref: v2.6.1
           path: ext/aceapex
+      - uses: actions/checkout@v4
+        with:
+          repository: yasha1971-coder/aceapex
+          ref: f2b7e2936589bf55813eb710b38ea45830808f12
+          path: ext/aceapex-pin
       - run: sudo apt-get update -q && sudo apt-get install -y -q libzstd-dev
       - run: |
           gcc -std=c99 -O2 -I. tests/gen.c -o gen && mkdir in && ./gen in
           gcc -std=c99 -O2 -c axfast.c -o axfast.o
           g++ -std=c++17 -O2 -I. -Iext/aceapex/src tests/check.cpp axfast.o ext/aceapex/src/aceapex_api.cpp ext/aceapex/src/lit_fse.cpp -o check -lzstd -lpthread
-          ./check $(for f in $INPUTS; do echo in/$f; done)
+          g++ -std=c++17 -O2 -I. -Iext/aceapex-pin/src tests/check.cpp axfast.o ext/aceapex-pin/src/aceapex_api.cpp ext/aceapex-pin/src/lit_fse.cpp -o check_pin -lzstd -lpthread
+          ./check --levels=1-4 $(for f in $INPUTS; do echo in/$f; done)
+          ./check_pin --levels=5-8 $(for f in $INPUTS; do echo in/$f; done)
   python:
     name: Python binding (pytest, bytes == C)
     runs-on: ubuntu-24.04
@@ -116,7 +123,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        os: [ubuntu-24.04, ubuntu-24.04-arm, macos-14, macos-15-intel]
+        os: [ubuntu-24.04, ubuntu-24.04-arm, macos-15, macos-15-intel]
     steps:
       - uses: actions/checkout@v4
       - uses: pypa/cibuildwheel@v2.21.3

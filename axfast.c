@@ -554,7 +554,7 @@ static void axe_greedy(const uint8_t* in, uint32_t n, const axe_params* P, axe_w
 /* optimal parse (levels 5..8): the longest match at every position (depth 512), then a forward DP over the block that
  * prices literal bytes + 4 bytes per token + LAMBDA = 2 per token */
 static void axe_optimal(const uint8_t* in, uint32_t n, const axe_params* P, axe_ws* w, uint32_t* tail) {
-    const uint32_t mm = P->mm, lastp = n > 12 ? n - 12 : 0, LONG = 4096; uint32_t pos, i, j, anchor = 0, nm = 0, k;
+    const uint32_t mm = P->mm, lastp = n > 12 ? n - 12 : 0, LONG = 4096, NICE = 256; uint32_t pos, i, j, anchor = 0, nm = 0, k;   /* NICE: a match this long ends the chain walk */
     for (i = 0; i < (1u << 16); i++) w->head[i] = AXE_NONE;
     for (i = 0; i <= n; i++) { w->chain[i] = AXE_NONE; w->bl[i] = 0; w->bd[i] = 0; }
     for (pos = 0; pos < lastp; pos++) {
@@ -563,7 +563,7 @@ static void axe_optimal(const uint8_t* in, uint32_t n, const axe_params* P, axe_
             const uint32_t d = pos - cand; if (d > AXE_DMAX + AXF_MIN_DIST || d > AXE_WIN) break;
             if (d >= AXF_MIN_DIST && axf_rd32(in + cand) == axf_rd32(in + pos)) {
                 const uint32_t l = axe_match_len(in, pos, cand, lim);
-                if (l > best) { best = l; bdist = d; if (l >= LONG) break; }
+                if (l > best) { best = l; bdist = d; if (l >= NICE) break; }   /* short periods made every candidate run to LONG */
             }
             cand = w->chain[cand];
         }
