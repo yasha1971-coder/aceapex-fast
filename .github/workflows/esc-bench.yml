@@ -1,0 +1,92 @@
+# TB-3-ESC-1 (measurement branch esc-bench, never merged): A/B of the V48 decoder (OLD, aceapex-fast main b9edf87) and
+# ESC-1 (NEW: long literal runs on the fast path) on Neoverse-N2 and Apple silicon for levels 1, 2, 5 on silesia, enwik8,
+# chr1 (bench/ab.sh); correctness of NEW off ace-core: ASan+UBSan round trips, both fuzzers 60 s with their negative
+# controls, qemu aarch64 / armhf / riscv64 round trips == x86.
+name: esc-bench
+on:
+  push:
+    branches: [esc-bench]
+  workflow_dispatch:
+permissions:
+  contents: read
+env:
+  SIL_SHA: a667bac80089b3d04d5496772149e632f0758974b0579d743cd8d6e5e0d63eb2
+  E8_SHA: 2b49720ec4d78c3c9fabaee6e4179a5e997302b3a70029f30f2d582218c024a8
+  CHR1_MD5: 9465e0f0df6e2c6eb39729c39cee5465
+  INPUTS: empty one small text dna zeros rand period mixed
+jobs:
+  ab:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {os: ubuntu-24.04-arm, cc: gcc, flags: "-march=armv8-a", tag: n2}
+          - {os: macos-15, cc: clang, flags: "", tag: apple}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 150
+    steps:
+    - uses: actions/checkout@v5
+    - name: Machine
+      run: |
+        uname -a; ${{ matrix.cc }} --version | head -1
+        lscpu 2>/dev/null | grep -E 'Model name|^CPU\(s\)' || sysctl -n machdep.cpu.brand_string hw.ncpu hw.perflevel0.physicalcpu 2>/dev/null || true
+    - uses: actions/cache@v5
+      with:
+        path: ~/corpus
+        key: corpus3-${{ runner.os }}-v1
+    - name: Corpora
+      run: |
+        mkdir -p ~/corpus && cd ~/corpus
+        s256() { if command -v sha256sum >/dev/null; then sha256sum "$1"; else shasum -a 256 "$1"; fi | cut -c1-64; }
+        [ -s silesia.tar ] || curl -sL https://github.com/DataCompression/corpus-collection/raw/main/Silesia-Corpus/silesia.tar.gz | gunzip -c > silesia.tar
+        [ -s enwik8 ] || { curl -sL -o enwik8.zip https://mattmahoney.net/dc/enwik8.zip && unzip -q -o enwik8.zip && rm -f enwik8.zip; }
+        [ -s chr1.fa ] || curl -sL https://hgdownload.soe.ucsc.edu/goldenPath/hg38/chromosomes/chr1.fa.gz | gunzip -c > chr1.fa
+        [ "$(s256 silesia.tar)" = "$SIL_SHA" ] && [ "$(s256 enwik8)" = "$E8_SHA" ] || { echo "corpus sha mismatch"; exit 1; }
+        python3 -c "import hashlib,sys; sys.exit(hashlib.md5(open('chr1.fa','rb').read()).hexdigest() != '$CHR1_MD5')"
+        ls -l
+    - name: A/B levels 1, 2, 5
+      run: CC=${{ matrix.cc }} OUT=/tmp/v48 bash bench/ab.sh "${{ matrix.flags }}" 1 11 5 "1 2 5" ~/corpus/silesia.tar ~/corpus/enwik8 ~/corpus/chr1.fa 2>&1 | tee ab_${{ matrix.tag }}.log
+    - name: Summary
+      run: python3 bench/summary.py ab_${{ matrix.tag }}.log | tee sum_${{ matrix.tag }}.txt
+    - uses: actions/upload-artifact@v5
+      if: always()
+      with:
+        name: esc-ab-${{ matrix.tag }}
+        path: |
+          ab_${{ matrix.tag }}.log
+          sum_${{ matrix.tag }}.txt
+  correctness:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+    - uses: actions/checkout@v5
+    - run: sudo apt-get update -q && sudo apt-get install -y -q qemu-user-static gcc-aarch64-linux-gnu gcc-arm-linux-gnueabihf gcc-riscv64-linux-gnu
+    - name: ASan + UBSan round trips, fuzz 60 s + negative control
+      run: |
+        SAN="-O1 -g -fsanitize=address,undefined -fno-sanitize-recover=undefined"
+        gcc -std=c99 -O2 -I. tests/gen.c -o gen && mkdir in && ./gen in
+        gcc -std=c99 $SAN -Wall -Wextra -Werror -I. tests/rt.c axfast.c -o rt
+        gcc -std=c99 $SAN -Wall -Wextra -Werror -I. tests/fuzz.c axfast.c -o fuzz_mut
+        for f in $INPUTS; do ./rt in/$f; done
+        ./fuzz_mut 60
+        if ./fuzz_mut control > control.txt 2>&1; then cat control.txt; echo "negative control NOT caught"; exit 1; fi
+        grep -q 'ERROR: AddressSanitizer' control.txt && echo "negative control caught"
+    - name: ClusterFuzzLite harness 60 s + VERIFY-assert negative control
+      run: |
+        SAN="-O1 -g -std=c99 -Wall -Wextra -Werror -fsanitize=address,undefined -fno-sanitize-recover=all"
+        mkdir seeds && gcc $SAN -I. fuzz/make_seeds.c axfast.c -o make_seeds && ./make_seeds seeds
+        gcc $SAN -I. fuzz/fuzz_axfast.c fuzz/standalone.c axfast.c -o fz && ./fz 60 seeds/*
+        gcc $SAN -DFUZZ_AXFAST_CONTROL -I. fuzz/fuzz_axfast.c fuzz/standalone.c axfast.c -o fzc
+        if ./fzc 60 seeds/verify*; then echo "VERIFY-assert negative control NOT caught"; exit 1; fi; echo "VERIFY-assert negative control caught"
+    - name: round trips under qemu (aarch64, armhf, riscv64) == x86
+      run: |
+        F="-std=c99 -O2 -Wall -Wextra -Werror -I."
+        gcc $F tests/rt.c axfast.c -o rt_x86
+        aarch64-linux-gnu-gcc -static $F tests/rt.c axfast.c -o rt_a64
+        arm-linux-gnueabihf-gcc -static $F tests/rt.c axfast.c -o rt_arm
+        riscv64-linux-gnu-gcc -static $F tests/rt.c axfast.c -o rt_rv
+        for f in $INPUTS; do ./rt_x86 in/$f > a.txt
+          qemu-aarch64-static ./rt_a64 in/$f > b.txt && diff a.txt b.txt
+          qemu-arm-static ./rt_arm in/$f > c.txt && diff a.txt c.txt
+          qemu-riscv64-static ./rt_rv in/$f > d.txt && diff a.txt d.txt
+          echo "$f: aarch64, armhf, riscv64 == x86"; done
