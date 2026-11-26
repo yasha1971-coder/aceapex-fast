@@ -1,0 +1,79 @@
+# RV-DIAG-1 PR checks (measurement branch rvmem-bench, never merged; builds off ace-core by Yakiv's rule):
+# 1) objdump of aceapex_api.cpp built with TurboBench's riscv64 line (g++ -O3 -std=c++17 -march=rv64gc -mabi=lp64d
+#    -fno-tree-vectorize -DXXH_INLINE_ALL), gcc 14 and gcc 13, for aceapex dev (V48, 0776099 lineage) and branch
+#    rv-memcpy: memcpy calls, lbu / sb, ld/sd in axf_dec_block (bench/rvcls.py);
+# 2) round trips under qemu-riscv64 (tests/rt.c, both compilers) == x86, and with -mtune=thead-c906 (a tune that
+#    declares fast misaligned access, so __riscv_misaligned_fast takes the 8-byte path);
+# 3) instructions per byte under qemu (16 MiB of silesia, levels 1-2): V48 (main) vs this branch.
+name: rvmem-bench
+on:
+  push:
+    branches: [rvmem-bench]
+  workflow_dispatch:
+permissions:
+  contents: read
+env:
+  INPUTS: empty one small text dna zeros rand period mixed
+jobs:
+  riscv:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+    - uses: actions/checkout@v5
+    - uses: actions/checkout@v5
+      with: {repository: yasha1971-coder/aceapex, ref: rv-memcpy, path: ace-new}
+    - uses: actions/checkout@v5
+      with: {repository: yasha1971-coder/aceapex, ref: dev, path: ace-old}
+    - run: sudo apt-get update -q && sudo apt-get install -y -q g++-14-riscv64-linux-gnu g++-13-riscv64-linux-gnu binutils-riscv64-linux-gnu gcc-riscv64-linux-gnu qemu-user
+    - name: zstd 1.6.0 headers (compile only)
+      run: |
+        curl -sL -o zstd.tar.gz https://github.com/facebook/zstd/releases/download/v1.6.0/zstd-1.6.0.tar.gz
+        echo "2ba599ae2a257976278e7e71e998433a387bfd18aa7b78678229fd5d84f5e9b8  zstd.tar.gz" | sha256sum -c -
+        tar -xzf zstd.tar.gz && ls zstd-1.6.0/lib/zstd.h
+    - name: objdump, TurboBench riscv64 line
+      run: |
+        echo "aceapex dev $(git -C ace-old rev-parse --short HEAD); rv-memcpy $(git -C ace-new rev-parse --short HEAD)"
+        for g in 14 13; do riscv64-linux-gnu-g++-$g --version | head -1
+          for v in old new; do
+            riscv64-linux-gnu-g++-$g -O3 -std=c++17 -march=rv64gc -mabi=lp64d -fno-tree-vectorize -DXXH_INLINE_ALL -Izstd-1.6.0/lib -Iace-$v/src -c ace-$v/src/aceapex_api.cpp -o g${g}_$v.o
+            riscv64-linux-gnu-objdump -dr --no-show-raw-insn g${g}_$v.o > g${g}_$v.dis
+          done
+          echo "predefined misaligned macros (gcc $g, -march=rv64gc): $(riscv64-linux-gnu-g++-$g -march=rv64gc -mabi=lp64d -dM -E -x c++ /dev/null | grep -i misaligned | tr '\n' ' ')"
+          echo "predefined misaligned macros (gcc $g, -mtune=thead-c906): $(riscv64-linux-gnu-g++-$g -march=rv64gc -mabi=lp64d -mtune=thead-c906 -dM -E -x c++ /dev/null 2>&1 | grep -i misaligned | tr '\n' ' ')"
+        done
+        python3 bench/rvcls.py g14_old.dis g14_new.dis g13_old.dis g13_new.dis | tee classes.txt
+    - name: round trips under qemu-riscv64 == x86 (gcc 14, gcc 13, gcc 14 -mtune=thead-c906)
+      run: |
+        gcc -std=c99 -O2 -I. tests/gen.c -o gen && mkdir in && ./gen in
+        gcc -std=c99 -O2 -I. tests/rt.c axfast.c -o rt_x86
+        F="-static -std=c99 -O2 -Wall -Wextra -Werror -march=rv64gc -mabi=lp64d -I."
+        riscv64-linux-gnu-gcc-14 $F tests/rt.c axfast.c -o rt_g14
+        riscv64-linux-gnu-gcc-13 $F tests/rt.c axfast.c -o rt_g13
+        riscv64-linux-gnu-gcc-14 $F -mtune=thead-c906 tests/rt.c axfast.c -o rt_c906
+        for f in $INPUTS; do ./rt_x86 in/$f > a.txt
+          for b in g14 g13 c906; do qemu-riscv64 ./rt_$b in/$f > b.txt && diff a.txt b.txt || { echo "MISMATCH $b $f"; exit 1; }; done
+          echo "$f: riscv64 gcc 14, gcc 13, gcc 14 thead-c906 == x86"; done
+    - name: instructions per byte under qemu, V48 (main) vs this branch, levels 1-2
+      run: |
+        curl -sL https://github.com/DataCompression/corpus-collection/raw/main/Silesia-Corpus/silesia.tar.gz | gunzip -c > silesia.tar
+        echo "a667bac80089b3d04d5496772149e632f0758974b0579d743cd8d6e5e0d63eb2  silesia.tar" | sha256sum -c -
+        python3 -c "d=open('silesia.tar','rb').read(); n=len(d); M=1<<20; k=16; s=(n-M)//(k-1); open('sil16.bin','wb').write(b''.join(d[i*s:i*s+M] for i in range(k)))"
+        mkdir -p v48 && cp bench/v48_axfast.c v48/axfast.c && cp axfast.h v48/
+        F="-static -O3 -march=rv64gc -mabi=lp64d -fno-tree-vectorize"
+        riscv64-linux-gnu-gcc-14 $F -Iv48 -o rv_v48 bench/tb3bench.c v48/axfast.c
+        riscv64-linux-gnu-gcc-14 $F -I. -o rv_new bench/tb3bench.c axfast.c
+        for L in 1 2; do qemu-riscv64 ./rv_v48 comp sil16.bin $L sil16.L$L.axf
+          for b in v48 new; do
+            c1=$(qemu-riscv64 -one-insn-per-tb -d exec,nochain -D /dev/stderr ./rv_$b dec sil16.L$L.axf sil16.bin 1 2>&1 >/dev/null | grep -c '^Trace')
+            c2=$(qemu-riscv64 -one-insn-per-tb -d exec,nochain -D /dev/stderr ./rv_$b dec sil16.L$L.axf sil16.bin 2 2>&1 >/dev/null | grep -c '^Trace')
+            echo "RV L$L $b insn/B $(python3 -c "print(round(($c2-$c1)/16777216,4))")"
+          done
+        done
+    - uses: actions/upload-artifact@v5
+      if: always()
+      with:
+        name: rvmem-objdump
+        path: |
+          classes.txt
+          g14_new.dis
+          g13_new.dis
