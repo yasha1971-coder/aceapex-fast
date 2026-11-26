@@ -19,7 +19,9 @@ a = "{ const uint8_t* sm = d - dist; axf_cp32(d, sm); axf_cp32(d + 32, sm + 32);
 assert t.count(a) == 1, "positive control: fast-path line not found"
 open(p, "w").write(t.replace(a, "{ const uint8_t* sm = d - dist; axf_cp32(d, sm); axf_cp32(d, sm); axf_cp32(d + 32, sm + 32); axf_cp32(d + 64, sm + 64); }"))
 PY
-for v in OLD:$D/old OLD2:$D/old NEW:$S PC:$O/pc; do n=${v%%:*}; src=${v#*:}
+# PREBUILT=dir: use dir/b_OLD, b_OLD2, b_NEW, b_PC built elsewhere (ace-core: gcc 13 static from Docker), no build here
+[ -n "${PREBUILT:-}" ] && { for n in OLD OLD2 NEW PC; do cp "$PREBUILT/b_$n" "$O/b_$n" || exit 3; echo "prebuilt $n $(h "$O/b_$n")"; done; }
+for v in OLD:$D/old OLD2:$D/old NEW:$S PC:$O/pc; do [ -n "${PREBUILT:-}" ] && break; n=${v%%:*}; src=${v#*:}
   $CC -O3 $FLAGS -I"$src" -c "$src/axfast.c" -o "$O/axf_$n.o" && $CC -O3 $FLAGS -I"$src" -o "$O/b_$n" "$D/tb3bench.c" "$O/axf_$n.o" || { echo "BUILD_FAILED $n"; exit 3; }
   echo "built $n from $src: axfast.c $(h "$src/axfast.c") obj $(h "$O/axf_$n.o")"
 done

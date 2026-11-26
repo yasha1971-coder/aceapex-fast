@@ -30,7 +30,9 @@ jobs:
         uname -a; ${{ matrix.cc }} --version | head -1
         lscpu 2>/dev/null | grep -E 'Model name|^CPU\(s\)' || sysctl -n machdep.cpu.brand_string hw.ncpu hw.perflevel0.physicalcpu 2>/dev/null || true
     - uses: actions/cache@v5
-      with: {path: ~/corpus, key: corpus3-${{ runner.os }}-v1}
+      with:
+        path: ~/corpus
+        key: corpus3-${{ runner.os }}-v1
     - name: Corpora
       run: |
         mkdir -p ~/corpus && cd ~/corpus
@@ -47,7 +49,11 @@ jobs:
       run: python3 bench/summary.py ab_${{ matrix.tag }}.log | tee sum_${{ matrix.tag }}.txt
     - uses: actions/upload-artifact@v5
       if: always()
-      with: {name: v48-ab-${{ matrix.tag }}, path: "ab_${{ matrix.tag }}.log\nsum_${{ matrix.tag }}.txt"}
+      with:
+        name: v48-ab-${{ matrix.tag }}
+        path: |
+          ab_${{ matrix.tag }}.log
+          sum_${{ matrix.tag }}.txt
   bytes:
     runs-on: ubuntu-24.04
     timeout-minutes: 120
@@ -58,7 +64,9 @@ jobs:
     steps:
     - uses: actions/checkout@v5
     - uses: actions/cache@v5
-      with: {path: ~/corpus, key: corpus3-${{ runner.os }}-v1}
+      with:
+        path: ~/corpus
+        key: corpus3-${{ runner.os }}-v1
     - name: Corpora
       run: |
         mkdir -p ~/corpus && cd ~/corpus
