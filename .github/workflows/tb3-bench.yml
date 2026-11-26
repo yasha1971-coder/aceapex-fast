@@ -1,0 +1,41 @@
+# TB-3-ARM-1: decoder A/B on Neoverse-N2 (GitHub ubuntu-24.04-arm, the runner of TurboBench's aarch64 rows).
+# Measurement branch only (tb3-bench); never merged. Five builds of the same axfast.c (A, A2 = A/A control, V48, W16,
+# PC = positive control) in one job, round trips of silesia / enwik8 / chr1 at levels 1-2, then 15 rounds on silesia
+# with the order rotating, 7 decodes per run. The same script runs on ace-core (x86) under the OVH-BENCH lock.
+name: tb3-bench
+on:
+  push:
+    branches: [tb3-bench]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  n2:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 60
+    steps:
+    - uses: actions/checkout@v5
+    - name: Machine
+      run: |
+        lscpu | grep -E 'Model name|Vendor|MHz|^CPU\(s\)|Flags' || true
+        cat /proc/cpuinfo | grep -m1 -E 'CPU part' || true
+        gcc --version | head -1; uname -a; nproc
+    - uses: actions/cache@v5
+      with: {path: ~/corpus, key: corpus-silesia-enwik8-chr1-v1}
+    - name: Corpora
+      run: |
+        mkdir -p ~/corpus && cd ~/corpus
+        [ -s silesia.tar ] || curl -sL https://github.com/DataCompression/corpus-collection/raw/main/Silesia-Corpus/silesia.tar.gz | gunzip -c > silesia.tar
+        echo "a667bac80089b3d04d5496772149e632f0758974b0579d743cd8d6e5e0d63eb2  silesia.tar" | sha256sum -c -
+        [ -s enwik8 ] || { curl -sL -o enwik8.zip https://mattmahoney.net/dc/enwik8.zip && unzip -q -o enwik8.zip && rm -f enwik8.zip; }
+        echo "2b49720ec4d78c3c9fabaee6e4179a5e997302b3a70029f30f2d582218c024a8  enwik8" | sha256sum -c -
+        [ -s chr1.fa ] || curl -sL https://hgdownload.soe.ucsc.edu/goldenPath/hg38/chromosomes/chr1.fa.gz | gunzip -c > chr1.fa
+        echo "9465e0f0df6e2c6eb39729c39cee5465  chr1.fa" | md5sum -c -
+    - name: A/B (TurboBench aarch64 flags -O3 -march=armv8-a)
+      run: OUT=/tmp/tb3 bash bench/run.sh "-march=armv8-a" 1 15 7 ~/corpus/silesia.tar ~/corpus/enwik8 ~/corpus/chr1.fa 2>&1 | tee n2.log
+    - name: Summary
+      run: |
+        for n in A A2 V48 W16 PC; do grep "^R .* $n median" n2.log | awk -v n=$n '{print $5}' | sort -n | awk -v n=$n '{a[NR]=$1} END {printf "%-4s runs %d median-of-medians %.1f min %.1f max %.1f\n", n, NR, a[int((NR+1)/2)], a[1], a[NR]}'; done
+    - uses: actions/upload-artifact@v5
+      if: always()
+      with: {name: tb3-n2-log, path: n2.log}
