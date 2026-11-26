@@ -99,8 +99,10 @@ AXF_INLINE uint32_t axf_block_len(const axf_arc_t* a, uint32_t b) {
 
 /* 32-byte copy; memcpy of a constant size compiles to one vector move (AVX2), two (SSE2/NEON). RISC-V: rv64gc
    builds are strict-align by default and gcc 14 calls memcpy for 32 bytes of unknown alignment (57 calls in the block
-   decoder of TurboBench 2026.11.24), so there four 8-byte copies, which it expands inline */
-#if defined(__riscv)
+   decoder of TurboBench 2026.11.24), so there four 8-byte copies, which it expands inline. AArch64: with Ubuntu's
+   default _FORTIFY_SOURCE, gcc 14 -O3 -march=armv8-a calls memcpy for the 32-byte copy (78 calls per KB of output in
+   axf_cpw and the token loop), the four 8-byte copies stay inline */
+#if defined(__riscv) || defined(__aarch64__)
 AXF_INLINE void axf_cp32(uint8_t* d, const uint8_t* s) {
     uint64_t a, b, c, e;
     memcpy(&a, s, 8); memcpy(&b, s + 8, 8); memcpy(&c, s + 16, 8); memcpy(&e, s + 24, 8);
