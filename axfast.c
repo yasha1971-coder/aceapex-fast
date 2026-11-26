@@ -109,6 +109,14 @@ AXF_INLINE void axf_cp32(uint8_t* d, const uint8_t* s) {
 #else
 AXF_INLINE void axf_cp32(uint8_t* d, const uint8_t* s) { memcpy(d, s, 32); }
 #endif
+/* 16-byte copy (TB-3-ARM-1 experiment: copy width by length class) */
+AXF_INLINE void axf_cp16(uint8_t* d, const uint8_t* s) { memcpy(d, s, 16); }
+/* TB-3-ARM-1 experiment switch for the fast path of axf_dec_block_tok_mm (min match 16 and 12; bytes and contract unchanged):
+   0 = 2.6.5 (64 literal + 96 match bytes per token), 1 = V48 (literals 48 B, 64 if ll > 48; match 64 B, 96 if ml > 64),
+   2 = W16 (literals and match in 16-byte steps up to their length), 9 = positive control (the first match copy twice) */
+#ifndef AXF_FP
+#define AXF_FP 0
+#endif
 /* up to AXF_COPY + 30 bytes in 32-byte steps; exact when the source lies >= 64 bytes before the destination or is disjoint */
 AXF_INLINE void axf_cpw(uint8_t* d, const uint8_t* s, uint32_t l) {
     uint32_t k;
@@ -208,11 +216,25 @@ AXF_INLINE uint32_t axf_dec_block_tok_mm(const uint8_t* src, size_t ssz, uint8_t
             /* literal copy reads lit..lit+63: lit <= lend holds here, so the read ends inside the pad */
             /* branch-free on lengths: always 64 literal bytes and 96 match bytes (ll <= 62, ml <= 94); the room check
                (>= 160 bytes before the copies, <= 62 literal bytes in front of the match: 98 left) covers both */
+#if AXF_FP == 1
+            axf_cp16(d, lit); axf_cp32(d + 16, lit + 16); if (AXF_UNLIKELY(ll > 48u)) axf_cp16(d + 48, lit + 48);
+#elif AXF_FP == 2
+            { uint32_t k; for (k = 0; k < ll; k += 16) axf_cp16(d + k, lit + k); }
+#else
             axf_cp32(d, lit); axf_cp32(d + 32, lit + 32);
+#endif
             d += ll; lit += ll;
             if (AXF_UNLIKELY((size_t)(d - dst) < dist)) return 0;    /* source before the block */
             ml = mc + mm;
+#if AXF_FP == 1
+            { const uint8_t* sm = d - dist; axf_cp32(d, sm); axf_cp32(d + 32, sm + 32); if (AXF_UNLIKELY(ml > 64u)) axf_cp32(d + 64, sm + 64); }
+#elif AXF_FP == 2
+            { const uint8_t* sm = d - dist; uint32_t k; for (k = 0; k < ml; k += 16) axf_cp16(d + k, sm + k); }
+#elif AXF_FP == 9
+            { const uint8_t* sm = d - dist; axf_cp32(d, sm); axf_cp32(d, sm); axf_cp32(d + 32, sm + 32); axf_cp32(d + 64, sm + 64); }
+#else
             { const uint8_t* sm = d - dist; axf_cp32(d, sm); axf_cp32(d + 32, sm + 32); axf_cp32(d + 64, sm + 64); }
+#endif
             d += ml;
             if (AXF_UNLIKELY(lit > lend)) return 0;                  /* the literals of this token were not all there */
             continue;
