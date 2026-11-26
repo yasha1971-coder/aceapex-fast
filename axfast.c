@@ -222,6 +222,25 @@ AXF_INLINE uint32_t axf_dec_block_tok_mm(const uint8_t* src, size_t ssz, uint8_t
             if (AXF_UNLIKELY(lit > lend)) return 0;                  /* the literals of this token were not all there */
             continue;
         }
+        if (ll == 63u && mc != 63u && d < dfast) {
+            /* TB-3-ESC-1: a long literal run with a short match stays on the fast path when the output has room for the
+               whole run + 160 bytes and the literals are there: 32-byte steps for the run (writes <= L + 31, reads end
+               <= 31 bytes into the pad), then the V48 match copies (<= 96 bytes). Otherwise the extension pointer is
+               rewound and the exact path below reads it again. */
+            const uint8_t* e0 = ext; int bad = 0;
+            const uint32_t L = 63u + axf_ext(&ext, eend, &bad);
+            if (bad) return 0;
+            if ((size_t)(lend - lit) >= L && (size_t)(dend - d) >= (size_t)L + AXF_ROOM) {
+                axf_cpw(d, lit, L);
+                d += L; lit += L;
+                if (AXF_UNLIKELY((size_t)(d - dst) < dist)) return 0;    /* source before the block */
+                ml = mc + mm;
+                { const uint8_t* sm = d - dist; axf_cp32(d, sm); axf_cp32(d + 32, sm + 32); if (AXF_UNLIKELY(ml > 64u)) axf_cp32(d + 64, sm + 64); }
+                d += ml;
+                continue;
+            }
+            ext = e0;
+        }
         {   /* exact path: block end, long literal run, long match */
             int bad = 0; uint32_t k;
             if (ll == 63u) { ll += axf_ext(&ext, eend, &bad); if (bad) return 0; }
