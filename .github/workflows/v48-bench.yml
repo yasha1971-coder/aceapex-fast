@@ -1,0 +1,101 @@
+# V48 gate (Yakiv 26.11; measurement branch v48-bench, never merged): A/B of the 2.6.5 decoder (OLD) and V48 (NEW) on
+# Neoverse-N2 and Apple silicon for levels 1, 2, 5 on silesia, enwik8, chr1 (bench/ab.sh); archive bytes of levels 1-8 on
+# the three corpora, OLD and NEW builds, with cross decoding; RISC-V instructions per byte (qemu) for the decoders of
+# 2.6.4 (aceapex-fast 0502dcf), 2.6.5 (039b037) and V48 (data only).
+name: v48-bench
+on:
+  push:
+    branches: [v48-bench]
+  workflow_dispatch:
+permissions:
+  contents: read
+env:
+  SIL_SHA: a667bac80089b3d04d5496772149e632f0758974b0579d743cd8d6e5e0d63eb2
+  E8_SHA: 2b49720ec4d78c3c9fabaee6e4179a5e997302b3a70029f30f2d582218c024a8
+  CHR1_MD5: 9465e0f0df6e2c6eb39729c39cee5465
+jobs:
+  ab:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {os: ubuntu-24.04-arm, cc: gcc, flags: "-march=armv8-a", tag: n2}
+          - {os: macos-15, cc: clang, flags: "", tag: apple}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 150
+    steps:
+    - uses: actions/checkout@v5
+    - name: Machine
+      run: |
+        uname -a; ${{ matrix.cc }} --version | head -1
+        lscpu 2>/dev/null | grep -E 'Model name|^CPU\(s\)' || sysctl -n machdep.cpu.brand_string hw.ncpu hw.perflevel0.physicalcpu 2>/dev/null || true
+    - uses: actions/cache@v5
+      with: {path: ~/corpus, key: corpus3-${{ runner.os }}-v1}
+    - name: Corpora
+      run: |
+        mkdir -p ~/corpus && cd ~/corpus
+        s256() { if command -v sha256sum >/dev/null; then sha256sum "$1"; else shasum -a 256 "$1"; fi | cut -c1-64; }
+        [ -s silesia.tar ] || curl -sL https://github.com/DataCompression/corpus-collection/raw/main/Silesia-Corpus/silesia.tar.gz | gunzip -c > silesia.tar
+        [ -s enwik8 ] || { curl -sL -o enwik8.zip https://mattmahoney.net/dc/enwik8.zip && unzip -q -o enwik8.zip && rm -f enwik8.zip; }
+        [ -s chr1.fa ] || curl -sL https://hgdownload.soe.ucsc.edu/goldenPath/hg38/chromosomes/chr1.fa.gz | gunzip -c > chr1.fa
+        [ "$(s256 silesia.tar)" = "$SIL_SHA" ] && [ "$(s256 enwik8)" = "$E8_SHA" ] || { echo "corpus sha mismatch"; exit 1; }
+        python3 -c "import hashlib,sys; sys.exit(hashlib.md5(open('chr1.fa','rb').read()).hexdigest() != '$CHR1_MD5')"
+        ls -l
+    - name: A/B levels 1, 2, 5
+      run: CC=${{ matrix.cc }} OUT=/tmp/v48 bash bench/ab.sh "${{ matrix.flags }}" 1 11 5 "1 2 5" ~/corpus/silesia.tar ~/corpus/enwik8 ~/corpus/chr1.fa 2>&1 | tee ab_${{ matrix.tag }}.log
+    - name: Summary
+      run: python3 bench/summary.py ab_${{ matrix.tag }}.log | tee sum_${{ matrix.tag }}.txt
+    - uses: actions/upload-artifact@v5
+      if: always()
+      with: {name: v48-ab-${{ matrix.tag }}, path: "ab_${{ matrix.tag }}.log\nsum_${{ matrix.tag }}.txt"}
+  bytes:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        level: [1, 2, 3, 4, 5, 6, 7, 8]
+    steps:
+    - uses: actions/checkout@v5
+    - uses: actions/cache@v5
+      with: {path: ~/corpus, key: corpus3-${{ runner.os }}-v1}
+    - name: Corpora
+      run: |
+        mkdir -p ~/corpus && cd ~/corpus
+        [ -s silesia.tar ] || curl -sL https://github.com/DataCompression/corpus-collection/raw/main/Silesia-Corpus/silesia.tar.gz | gunzip -c > silesia.tar
+        [ -s enwik8 ] || { curl -sL -o enwik8.zip https://mattmahoney.net/dc/enwik8.zip && unzip -q -o enwik8.zip && rm -f enwik8.zip; }
+        [ -s chr1.fa ] || curl -sL https://hgdownload.soe.ucsc.edu/goldenPath/hg38/chromosomes/chr1.fa.gz | gunzip -c > chr1.fa
+        echo "$SIL_SHA  silesia.tar" | sha256sum -c - && echo "$E8_SHA  enwik8" | sha256sum -c - && echo "$CHR1_MD5  chr1.fa" | md5sum -c -
+    - name: Level ${{ matrix.level }} - OLD and NEW archives equal, cross decoding byte for byte
+      run: |
+        gcc -O3 -Ibench/old -o b_old bench/tb3bench.c bench/old/axfast.c && gcc -O3 -I. -o b_new bench/tb3bench.c axfast.c
+        L=${{ matrix.level }}
+        for f in silesia.tar enwik8 chr1.fa; do p=~/corpus/$f
+          ./b_old comp $p $L old.axf > o.txt && ./b_new comp $p $L new.axf > n.txt || { cat o.txt n.txt; exit 1; }
+          cmp old.axf new.axf || { echo "ARCHIVE DIFFERS $f L$L"; exit 1; }
+          ./b_new dec old.axf $p 1 > /dev/null && ./b_old dec new.axf $p 1 > /dev/null || { echo "CROSS DECODE FAIL $f L$L"; exit 1; }
+          echo "BYTES $f L$L $(cat n.txt | sed 's/.*-> //') sha256 $(sha256sum new.axf | cut -c1-16): OLD == NEW, cross decode ok"
+        done
+  riscv:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+    - uses: actions/checkout@v5
+    - run: sudo apt-get update -q && sudo apt-get install -y -q qemu-user gcc-riscv64-linux-gnu
+    - name: RISC-V instructions per byte, 2.6.4 / 2.6.5 / V48 (TurboBench riscv64 flags; qemu -one-insn-per-tb, K=2 - K=1)
+      run: |
+        curl -sL https://github.com/DataCompression/corpus-collection/raw/main/Silesia-Corpus/silesia.tar.gz | gunzip -c > silesia.tar
+        echo "$SIL_SHA  silesia.tar" | sha256sum -c -
+        python3 -c "d=open('silesia.tar','rb').read(); n=len(d); M=1<<20; k=16; s=(n-M)//(k-1); open('sil16.bin','wb').write(b''.join(d[i*s:i*s+M] for i in range(k)))"
+        qemu-riscv64 --version | head -1; riscv64-linux-gnu-gcc --version | head -1
+        F="-static -O3 -march=rv64gc -mabi=lp64d -fno-tree-vectorize"
+        riscv64-linux-gnu-gcc $F -Ibench/rv264 -o rv_264 bench/tb3bench.c bench/rv264/axfast.c
+        riscv64-linux-gnu-gcc $F -Ibench/old -o rv_265 bench/tb3bench.c bench/old/axfast.c
+        riscv64-linux-gnu-gcc $F -I. -o rv_v48 bench/tb3bench.c axfast.c
+        for L in 1 2; do qemu-riscv64 ./rv_265 comp sil16.bin $L sil16.L$L.axf
+          for b in 264 265 v48; do
+            c1=$(qemu-riscv64 -one-insn-per-tb -d exec,nochain -D /dev/stderr ./rv_$b dec sil16.L$L.axf sil16.bin 1 2>&1 >/dev/null | grep -c '^Trace')
+            c2=$(qemu-riscv64 -one-insn-per-tb -d exec,nochain -D /dev/stderr ./rv_$b dec sil16.L$L.axf sil16.bin 2 2>&1 >/dev/null | grep -c '^Trace')
+            echo "RV L$L $b K1 $c1 K2 $c2 insn/B $(python3 -c "print(round(($c2-$c1)/16777216,4))")"
+          done
+        done
