@@ -39,3 +39,62 @@ jobs:
     - uses: actions/upload-artifact@v5
       if: always()
       with: {name: tb3-n2-log, path: n2.log}
+  # Correctness of every variant off ace-core (ace-core keeps only builds and the x86 A/B under the lock): ASan + UBSan
+  # round trips, the mutation fuzzer 60 s and the ClusterFuzzLite harness 60 s with their negative controls (as ci.yml
+  # "sanitize"), round trips under qemu for aarch64, armhf and riscv64 against the x86 output, and instructions per byte
+  # (qemu-user 8.2 -one-insn-per-tb -d exec,nochain, decode K=2 minus K=1) for aarch64 -march=armv8-a and x86 -march=haswell.
+  variants:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        fp: [0, 1, 2, 9]
+    env:
+      INPUTS: empty one small text dna zeros rand period mixed
+    steps:
+    - uses: actions/checkout@v5
+    - run: sudo apt-get update -q && sudo apt-get install -y -q qemu-user qemu-user-static gcc-aarch64-linux-gnu gcc-arm-linux-gnueabihf gcc-riscv64-linux-gnu
+    - name: ASan + UBSan round trips, fuzz 60 s + negative control (AXF_FP=${{ matrix.fp }})
+      run: |
+        SAN="-O1 -g -fsanitize=address,undefined -fno-sanitize-recover=undefined -DAXF_FP=${{ matrix.fp }}"
+        gcc -std=c99 -O2 -I. tests/gen.c -o gen && mkdir in && ./gen in
+        gcc -std=c99 $SAN -Wall -Wextra -Werror -I. tests/rt.c axfast.c -o rt
+        gcc -std=c99 $SAN -Wall -Wextra -Werror -I. tests/fuzz.c axfast.c -o fuzz_mut
+        for f in $INPUTS; do ./rt in/$f; done
+        ./fuzz_mut 60
+        if ./fuzz_mut control > control.txt 2>&1; then cat control.txt; echo "negative control NOT caught"; exit 1; fi
+        grep -q 'ERROR: AddressSanitizer' control.txt && echo "negative control caught"
+    - name: ClusterFuzzLite harness 60 s + VERIFY-assert negative control (AXF_FP=${{ matrix.fp }})
+      run: |
+        SAN="-O1 -g -std=c99 -Wall -Wextra -Werror -fsanitize=address,undefined -fno-sanitize-recover=all -DAXF_FP=${{ matrix.fp }}"
+        mkdir seeds && gcc $SAN -I. fuzz/make_seeds.c axfast.c -o make_seeds && ./make_seeds seeds
+        gcc $SAN -I. fuzz/fuzz_axfast.c fuzz/standalone.c axfast.c -o fz && ./fz 60 seeds/*
+        gcc $SAN -DFUZZ_AXFAST_CONTROL -I. fuzz/fuzz_axfast.c fuzz/standalone.c axfast.c -o fzc
+        if ./fzc 60 seeds/verify*; then echo "VERIFY-assert negative control NOT caught"; exit 1; fi; echo "VERIFY-assert negative control caught"
+    - name: round trips under qemu (aarch64, armhf, riscv64) == x86 (AXF_FP=${{ matrix.fp }})
+      run: |
+        F="-std=c99 -O2 -Wall -Wextra -Werror -DAXF_FP=${{ matrix.fp }} -I."
+        gcc -std=c99 -O2 -I. tests/gen.c -o gen && mkdir -p in && ./gen in
+        gcc $F tests/rt.c axfast.c -o rt_x86
+        aarch64-linux-gnu-gcc -static $F tests/rt.c axfast.c -o rt_a64
+        arm-linux-gnueabihf-gcc -static $F tests/rt.c axfast.c -o rt_arm
+        riscv64-linux-gnu-gcc -static $F tests/rt.c axfast.c -o rt_rv
+        for f in $INPUTS; do ./rt_x86 in/$f > a.txt
+          qemu-aarch64-static ./rt_a64 in/$f > b.txt && diff a.txt b.txt
+          qemu-arm-static ./rt_arm in/$f > c.txt && diff a.txt c.txt
+          qemu-riscv64-static ./rt_rv in/$f > d.txt && diff a.txt d.txt
+          echo "$f: aarch64, armhf, riscv64 == x86"; done
+    - name: instructions per byte, 16 MiB of silesia (AXF_FP=${{ matrix.fp }})
+      run: |
+        curl -sL https://github.com/DataCompression/corpus-collection/raw/main/Silesia-Corpus/silesia.tar.gz | gunzip -c > silesia.tar
+        echo "a667bac80089b3d04d5496772149e632f0758974b0579d743cd8d6e5e0d63eb2  silesia.tar" | sha256sum -c -
+        python3 -c "d=open('silesia.tar','rb').read(); n=len(d); M=1<<20; k=16; s=(n-M)//(k-1); open('sil16.bin','wb').write(b''.join(d[i*s:i*s+M] for i in range(k)))"
+        qemu-aarch64 --version | head -1
+        aarch64-linux-gnu-gcc -static -O3 -march=armv8-a -DAXF_FP=${{ matrix.fp }} -I. bench/tb3bench.c axfast.c -o tb_a64
+        gcc -static -O3 -march=haswell -DAXF_FP=${{ matrix.fp }} -I. bench/tb3bench.c axfast.c -o tb_x64
+        ./tb_x64 comp sil16.bin 1 sil16.axf
+        for t in "a64 qemu-aarch64" "x64 qemu-x86_64"; do set -- $t
+          for k in 1 2; do c=$($2 -one-insn-per-tb -d exec,nochain -D /dev/stderr ./tb_$1 dec sil16.axf sil16.bin $k 2>&1 >/dev/null | grep -c '^Trace'); echo "COUNT $1 K $k $c"; eval "c_$1_$k=$c"; done
+        done
+        echo "INSN/B AXF_FP=${{ matrix.fp }} a64 $(python3 -c "print(round(($c_a64_2-$c_a64_1)/16777216,4))") x64 $(python3 -c "print(round(($c_x64_2-$c_x64_1)/16777216,4))")"
